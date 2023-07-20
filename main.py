@@ -1,15 +1,19 @@
 """
 Main script to initialize logger and server
 """
-
+import minio
+import os
+from minio import Minio
 import uvicorn
 import subprocess
-from fastapi import FastAPI, status
+from fastapi import FastAPI, status, Response, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from influxdb_client import InfluxDBClient
 from starlette.middleware.cors import CORSMiddleware
 import influxdb_client
 from app.helpers.config_helper import props
 from app.routers.user import router as user_router
+
 
 __author__ = "Dinesh Sinnarasse"
 __copyright__ = "Copyright 2023, Enterprise Minds"
@@ -39,6 +43,17 @@ app.add_middleware(
 )
 
 app.include_router(user_router)
+
+# Initialize MinIO client during startup and return it
+
+
+minio_client = Minio('play.min.io',
+                     'minioadmin', 'minioadmin', secure=Talse)  # Assuming you are using HTTP (non-secure) connection
+
+
+def get_minio_client():
+    print("ok")
+    return minio_client
 
 
 @app.on_event('startup')
@@ -71,6 +86,24 @@ def perform_insertdata():
     subprocess.run(command, shell=True)
     return {'db': 'Everything OK!'}
 
+
+@app.get("/start/{bucket_name}/{object_name}")
+async def get_csv_from_minio(bucket_name: str, object_name: str, minio_client: Minio = Depends(get_minio_client)):
+    # Save the file in the same name as the object with '.csv' extension
+    local_file_path = f"{object_name}.csv"
+
+    try:
+        # Use the MinIO client to get the object
+        chunk_size = 512 * 1024  # 512 KB chunk size
+        with open(local_file_path, 'wb') as csvfile:
+            data = minio_client.get_object(bucket_name, object_name)
+            for line in data.stream(chunk_size):
+                csvfile.write(line)
+
+        return {"message": "CSV file retrieved successfully and saved locally."}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     # Read server connection details
